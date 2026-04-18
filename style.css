@@ -8,10 +8,11 @@ h1, h2, h3 {
 
 .stButton>button {
     background: linear-gradient(45deg, #FF69B4, #FF1493);
-    color: white;
+    color: white !important; 
     border-radius: 25px;
     padding: 10px 20px;
     font-weight: bold;
+    border: none;
 }
 
 .stTextInput input, .stTextArea textarea {
@@ -25,4 +26,10 @@ h1, h2, h3 {
     border-radius: 20px;
     box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     margin-bottom: 15px;
+
+    color: #000000 !important; 
+}
+
+.card b, .card strong {
+    color: #C71585;
 }

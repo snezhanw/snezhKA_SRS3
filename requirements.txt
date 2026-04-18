@@ -1,6 +1,5 @@
-streamlit
-crewai
-crewai-tools
-langchain-google-genai
-python-dotenv
-google-generativeai
+streamlit==1.33.0
+crewai==0.30.11
+crewai-tools==0.3.0
+python-dotenv==1.0.1
+google-generativeai==0.5.4
