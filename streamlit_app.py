@@ -1,30 +1,21 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
+import google.generativeai as genai
 
-from crewai import Agent, Task, Crew, Process, LLM
-from crewai_tools import FileReadTool, SerperDevTool
 
-# 1. ENV
 load_dotenv()
 
-os.environ["SERPER_API_KEY"] = os.getenv("SERPER_API_KEY", "")
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
 if not os.environ["GOOGLE_API_KEY"]:
     st.error("❌ Нет GOOGLE_API_KEY")
     st.stop()
 
-llm = LLM(
-    model="gemini/gemini-2.5-flash",
-    api_key=os.environ["GOOGLE_API_KEY"]
-)
+genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+model = genai.GenerativeModel("gemini-1.5-flash")
 
-file_tool = FileReadTool()
-search_tool = SerperDevTool()
-
-# 2. UI
-st.set_page_config(page_title="KazNU Multi-Agent", layout="wide")
+st.set_page_config(page_title="Multi-Agent Guide", layout="wide")
 
 def load_css():
     if os.path.exists("style.css"):
@@ -33,226 +24,192 @@ def load_css():
 
 load_css()
 
-# 3. MEMORY (Streamlit + CrewAI)
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# 4. SIDEBAR
-st.sidebar.title("Навигация")
-st.sidebar.info("Multi-Agent System")
-
-st.title("🌸 KazNU Multi-Agent System")
+st.title("🌍 Adaptive Student Guide (Multi-Agent System)")
 
 if os.path.exists("banner.jpg"):
     st.image("banner.jpg", use_container_width=True)
 
-# 5. AGENT CONFIG
-st.header("⚙️ Конфигурация")
-
-with st.expander("Редактирование"):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        r_analyst = st.text_input("Роль аналитика", "Культурный аналитик")
-        g_analyst = st.text_input("Цель аналитика", "Анализ профиля студента и его трудностей")
-
-    with col2:
-        r_guide = st.text_input("Роль гида", "Навигатор кампуса")
-        g_guide = st.text_input("Цель гида", "Создание персонального маршрута адаптации")
-
-# 6. INPUT
-st.header("📝 Вход")
-
-user_question = st.text_area("Вопрос", "Сделай маршрут по кампусу")
+st.header("⚙️ Конфигурация агентов")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    user_country = st.text_input("Страна", "Южная Корея")
-    req_type = st.selectbox("Тип", ["Общий", "Учеба", "Жилье", "Медицина", "Документы", "Досуг"])
-
-    k_base = st.text_area("Knowledge (база знаний)", "СББП помогает студентам адаптироваться. Есть общежития, медпункт, библиотека.")
+    analyst_role = st.text_input("Роль аналитика", "Культурный аналитик")
+    analyst_goal = st.text_input("Цель аналитика", "Понять проблемы студента")
 
 with col2:
-    uploaded_file = st.file_uploader("Файл инфраструктуры", type=["txt"])
+    guide_role = st.text_input("Роль гида", "Навигатор кампуса")
+    guide_goal = st.text_input("Цель гида", "Создать маршрут адаптации")
 
-    infra_path = None
-    infra_text = ""
+st.header("📝 Входные данные")
 
-    if uploaded_file:
-        with open("temp_infra.txt", "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        infra_path = "temp_infra.txt"
-        st.success("Файл загружен")
+question = st.text_area("Запрос студента", "Как мне адаптироваться в университете?")
+country = st.text_input("Страна", "Южная Корея")
 
-    elif os.path.exists("data/infrastructure.txt"):
-        infra_path = "data/infrastructure.txt"
-        st.info("Используется файл по умолчанию")
+req_type = st.selectbox(
+    "Тип запроса",
+    ["Общий", "Учёба", "Жильё", "Медицина", "Документы", "Досуг"]
+)
 
-# читаем инфраструктуру
-if infra_path:
-    with open(infra_path, encoding="utf-8") as f:
+knowledge = st.text_area(
+    "Knowledge база",
+    "Кампус включает общежитие, библиотеку, медцентр, деканат."
+)
+
+uploaded_file = st.file_uploader("Загрузите файл инфраструктуры (.txt)", type=["txt"])
+
+infra_text = ""
+
+if uploaded_file:
+    infra_text = uploaded_file.read().decode("utf-8")
+    st.success("Файл загружен")
+elif os.path.exists("data/infrastructure.txt"):
+    with open("data/infrastructure.txt", encoding="utf-8") as f:
         infra_text = f.read()
 
-# KNOWLEDGE FILE
 rules_text = ""
 if os.path.exists("knowledge/rules.txt"):
     with open("knowledge/rules.txt", encoding="utf-8") as f:
         rules_text = f.read()
 
-# 7. RUN
-st.header("🚀 Запуск")
+need_clarification = False
 
-if st.button("Сгенерировать"):
+if req_type == "Общий" or len(question) < 25:
+    need_clarification = True
 
-    if not infra_path:
-        st.error("❌ Нет файла инфраструктуры")
-        st.stop()
+st.header("🚀 Запуск системы")
 
-    # сохраняем в memory
+if st.button("Сгенерировать ответ"):
+
     st.session_state.history.append({
-        "question": user_question,
-        "country": user_country,
+        "question": question,
+        "country": country,
         "type": req_type
     })
 
-    # === AGENTS ===
-    analyst = Agent(
-        role=r_analyst,
-        goal=g_analyst,
-        backstory="Эксперт по культурной адаптации иностранных студентов",
-        tools=[search_tool],
-        llm=llm,
-        verbose=True
-    )
+    def simple_tool_search(text):
+        return f"🔎 Результаты поиска по: {text}"
 
-    guide = Agent(
-        role=r_guide,
-        goal=g_guide,
-        backstory="Специалист по инфраструктуре кампуса",
-        tools=[file_tool],
-        llm=llm,
-        memory=True,
-        verbose=True
-    )
+    if need_clarification:
+        st.warning("⚠️ Недостаточно данных — генерируется уточнение")
 
-    critic = Agent(
-        role="Контролер качества",
-        goal="Проверка корректности и культурной аккуратности рекомендаций",
-        backstory="Проверяет соответствие рекомендаций правилам и культуре",
-        llm=llm,
-        verbose=True
-    )
+        clarification_prompt = f"""
+Ты помощник университета.
+Сгенерируй уточняющий вопрос студенту.
 
-    tasks = []
-
-    # === TASK 1: ANALYSIS (Memory + Knowledge + Tools) ===
-    tasks.append(Task(
-        description=f"""
-Проанализируй студента:
-
-Вопрос: {user_question}
-Страна: {user_country}
+Запрос: {question}
 Тип: {req_type}
 
-История прошлых запросов:
+Спроси про:
+- проживание
+- учебу
+- медицину
+- документы
+- досуг
+"""
+
+        clarification = model.generate_content(clarification_prompt).text
+
+        st.info("❓ Уточнение:")
+        st.write(clarification)
+
+    analyst_prompt = f"""
+Ты {analyst_role}.
+
+Цель: {analyst_goal}
+
+Проанализируй студента:
+
+Запрос: {question}
+Страна: {country}
+Тип: {req_type}
+
+Knowledge:
+{knowledge}
+
+Rules:
+{rules_text}
+
+История:
 {st.session_state.history}
 
-Используй Knowledge и Rules:
-Knowledge: {k_base}
-Rules: {rules_text}
-
-При необходимости используй search tool.
+Используй инструмент поиска:
+{simple_tool_search(question)}
 
 Определи:
-- профиль студента
-- возможные трудности
-- культурные особенности
-        """,
-        expected_output="Анализ профиля студента и список потенциальных проблем",
-        agent=analyst
-    ))
+- проблемы студента
+- культурные сложности
+- потребности
+"""
 
-    # === CONDITIONAL TASK ===
-    if req_type == "Общий" or len(user_question) < 30:
-        tasks.append(Task(
-            description="""
-Информации недостаточно.
+    analyst_result = model.generate_content(analyst_prompt).text
 
-Сгенерируй короткий уточняющий вопрос.
-Варианты: проживание, учеба, медицина, документы, досуг.
-            """,
-            expected_output="1 уточняющий вопрос",
-            agent=analyst
-        ))
+    guide_prompt = f"""
+Ты {guide_role}.
 
-    # === TASK 2: ROUTE (Files + Tools) ===
-    tasks.append(Task(
-        description=f"""
-Используй file tool для анализа файла инфраструктуры: {infra_path}
+Цель: {guide_goal}
 
-Инфраструктура:
+Используй инфраструктуру:
 {infra_text}
 
-Создай персональный маршрут для типа: {req_type}
+Создай маршрут адаптации для студента:
 
-Учитывай анализ предыдущего агента.
-        """,
-        expected_output="Подробный маршрут адаптации",
-        agent=guide
-    ))
+Анализ:
+{analyst_result}
 
-    # === TASK 3: FINAL (Knowledge) ===
-    tasks.append(Task(
-        description=f"""
-Сформируй финальный персональный гид.
+Сделай:
+- пошаговый маршрут
+- рекомендации
+- сервисы кампуса
+"""
 
-Используй:
-- предыдущие результаты
-- Knowledge
-- Rules
+    guide_result = model.generate_content(guide_prompt).text
 
-Сделай ответ:
-- понятным
-- культурно аккуратным
-- структурированным
-        """,
-        expected_output="Готовый персональный гид",
-        agent=critic
-    ))
+    final_prompt = f"""
+Ты контролёр качества.
 
-    crew = Crew(
-        agents=[analyst, guide, critic],
-        tasks=tasks,
-        process=Process.sequential,
-        memory=True
-    )
+Проверь и улучши текст:
 
-    with st.spinner("Генерация..."):
-        result = crew.kickoff()
+{guide_result}
 
-    # === HITL ===
-    st.subheader("🧑‍⚖️ Проверка результата (HITL)")
+Проверь:
+- корректность
+- культурную чувствительность
+- понятность
 
-    decision = st.radio("Подтверждение:", ["Одобрить", "Отклонить"])
+Верни финальный гид.
+"""
 
-    if decision == "Одобрить":
-        st.markdown(f"<div class='card'>{result.raw}</div>", unsafe_allow_html=True)
-        st.success("✅ Одобрено")
-        st.balloons()
+    final_result = model.generate_content(final_prompt).text
 
+    st.subheader("🧑 HITL Проверка")
+
+    decision = st.radio("Одобрить результат?", ["Да", "Нет"])
+
+    if decision == "Да":
+        st.success("✅ Финальный результат")
+        st.markdown(f"<div class='card'>{final_result}</div>", unsafe_allow_html=True)
     else:
-        st.warning("❌ Результат отклонён пользователем")
+        st.error("❌ Отклонено пользователем")
 
-    # === LOGS ===
-    st.subheader("📊 Лог выполнения")
-    st.write(result)
+    st.subheader("📊 Логика агентов")
 
-# 8. HISTORY
-st.header("📚 История")
+    st.markdown("### 🧠 Аналитик")
+    st.write(analyst_result)
 
-for i in st.session_state.history:
+    st.markdown("### 🧭 Гид")
+    st.write(guide_result)
+
+    st.markdown("### 🧪 Контроль")
+    st.write(final_result)
+
+st.header("📚 История запросов")
+
+for h in st.session_state.history:
     st.markdown(
-        f"<div class='card'>❓ {i['question']}<br>🌍 {i['country']}<br>📌 {i['type']}</div>",
+        f"<div class='card'>❓ {h['question']}<br>🌍 {h['country']}<br>📌 {h['type']}</div>",
         unsafe_allow_html=True
     )
